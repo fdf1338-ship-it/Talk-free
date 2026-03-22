@@ -43,8 +43,8 @@
 
 <h1>TalkFree</h1>
 
-<video id="localVideo" autoplay muted></video>
-<video id="remoteVideo" autoplay></video>
+<video id="localVideo" autoplay muted playsinline></video>
+<video id="remoteVideo" autoplay playsinline></video>
 
 <br>
 
@@ -54,7 +54,8 @@
 <button onclick="toggleAudio()">Mic On/Off</button>
 
 <script>
-  // 🔥 FIREBASE CONFIG
+
+  // FIREBASE CONFIG
   const firebaseConfig = {
     apiKey: "AIzaSyCcrQHZ6Jtep0NQLBbzdoTwzF4ENqDdQgI",
     authDomain: "studio-3348455112-709b6.firebaseapp.com",
@@ -77,40 +78,50 @@
   let audioOn = true;
 
   const servers = {
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }
+    ]
   };
 
-  // 🎥 START CAMERA + JOIN
+  // START CAMERA
   async function start() {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true
-    });
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true
+      });
 
-    document.getElementById("localVideo").srcObject = localStream;
+      document.getElementById("localVideo").srcObject = localStream;
 
-    listenForCalls();
-    joinQueue();
+      listenForCalls();
+      joinQueue();
+
+    } catch (error) {
+      alert("Camera not working: " + error.message);
+      console.error(error);
+    }
   }
 
-  // 🎥 TOGGLE CAMERA
+  // CAMERA TOGGLE
   function toggleVideo() {
+    if (!localStream) return;
     videoOn = !videoOn;
     localStream.getVideoTracks()[0].enabled = videoOn;
   }
 
-  // 🎤 TOGGLE MIC
+  // MIC TOGGLE
   function toggleAudio() {
+    if (!localStream) return;
     audioOn = !audioOn;
     localStream.getAudioTracks()[0].enabled = audioOn;
   }
 
-  // 🔁 NEXT USER
+  // NEXT USER
   function nextUser() {
-    location.reload(); // simple reset
+    location.reload();
   }
 
-  // 📡 JOIN QUEUE
+  // JOIN QUEUE
   async function joinQueue() {
     await db.collection("users").doc(userId).set({
       status: "waiting"
@@ -119,7 +130,7 @@
     findMatch();
   }
 
-  // 🔍 FIND MATCH
+  // FIND MATCH
   async function findMatch() {
     const users = await db.collection("users")
       .where("status", "==", "waiting")
@@ -132,7 +143,7 @@
     });
   }
 
-  // 🤝 CONNECT (CREATE OFFER)
+  // CONNECT (CREATE OFFER)
   async function connectToUser(otherUserId) {
     peerConnection = new RTCPeerConnection(servers);
 
@@ -191,7 +202,7 @@
     });
   }
 
-  // 📞 ANSWER CALL
+  // ANSWER CALL
   async function answerCall(callId) {
     const callDoc = db.collection("calls").doc(callId);
 
@@ -246,7 +257,7 @@
     });
   }
 
-  // 👂 LISTEN FOR CALLS
+  // LISTEN FOR CALLS
   function listenForCalls() {
     db.collection("calls").onSnapshot(snapshot => {
       snapshot.docChanges().forEach(change => {
