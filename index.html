@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>TalkFree</title>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"></script>
+
+  <style>
+    body {
+      background: black;
+      color: white;
+      text-align: center;
+      font-family: Arial;
+    }
+
+    h1 {
+      margin-top: 20px;
+    }
+
+    video {
+      width: 300px;
+      height: 220px;
+      background: #222;
+      margin: 10px;
+      border-radius: 10px;
+    }
+
+    button {
+      padding: 10px 20px;
+      margin: 10px;
+      border: none;
+      border-radius: 8px;
+      background: #00ffcc;
+      cursor: pointer;
+      font-size: 16px;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>TalkFree</h1>
+
+<video id="localVideo" autoplay muted></video>
+<video id="remoteVideo" autoplay></video>
+
+<br>
+
+<button onclick="start()">Start</button>
+<button onclick="nextUser()">Next</button>
+<button onclick="toggleVideo()">Camera On/Off</button>
+<button onclick="toggleAudio()">Mic On/Off</button>
+
+<script>
+  // 🔥 FIREBASE CONFIG
+  const firebaseConfig = {
+    apiKey: "AIzaSyCcrQHZ6Jtep0NQLBbzdoTwzF4ENqDdQgI",
+    authDomain: "studio-3348455112-709b6.firebaseapp.com",
+    projectId: "studio-3348455112-709b6",
+    storageBucket: "studio-3348455112-709b6.firebasestorage.app",
+    messagingSenderId: "65643848462",
+    appId: "1:65643848462:web:bebbf730942e6c11d9ad5f"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  let localStream;
+  let remoteStream;
+  let peerConnection;
+
+  let userId = Math.random().toString(36).substring(7);
+
+  let videoOn = true;
+  let audioOn = true;
+
+  const servers = {
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  };
+
+  // 🎥 START CAMERA + JOIN
+  async function start() {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true
+    });
+
+    document.getElementById("localVideo").srcObject = localStream;
+
+    listenForCalls();
+    joinQueue();
+  }
+
+  // 🎥 TOGGLE CAMERA
+  function toggleVideo() {
+    videoOn = !videoOn;
+    localStream.getVideoTracks()[0].enabled = videoOn;
+  }
+
+  // 🎤 TOGGLE MIC
+  function toggleAudio() {
+    audioOn = !audioOn;
+    localStream.getAudioTracks()[0].enabled = audioOn;
+  }
+
+  // 🔁 NEXT USER
+  function nextUser() {
+    location.reload(); // simple reset
+  }
+
+  // 📡 JOIN QUEUE
+  async function joinQueue() {
+    await db.collection("users").doc(userId).set({
+      status: "waiting"
+    });
+
+    findMatch();
+  }
+
+  // 🔍 FIND MATCH
+  async function findMatch() {
+    const users = await db.collection("users")
+      .where("status", "==", "waiting")
+      .get();
+
+    users.forEach(doc => {
+      if (doc.id !== userId) {
+        connectToUser(doc.id);
+      }
+    });
+  }
+
+  // 🤝 CONNECT (CREATE OFFER)
+  async function connectToUser(otherUserId) {
+    peerConnection = new RTCPeerConnection(servers);
+
+    remoteStream = new MediaStream();
+    document.getElementById("remoteVideo").srcObject = remoteStream;
+
+    localStream.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStream);
+    });
+
+    peerConnection.ontrack = event => {
+      event.streams[0].getTracks().forEach(track => {
+        remoteStream.addTrack(track);
+      });
+    };
+
+    const callId = userId + "_" + otherUserId;
+    const callDoc = db.collection("calls").doc(callId);
+
+    const offerCandidates = callDoc.collection("offerCandidates");
+    const answerCandidates = callDoc.collection("answerCandidates");
+
+    peerConnection.onicecandidate = event => {
+      if (event.candidate) {
+        offerCandidates.add(event.candidate.toJSON());
+      }
+    };
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    await callDoc.set({
+      offer: {
+        type: offer.type,
+        sdp: offer.sdp
+      }
+    });
+
+    callDoc.onSnapshot(snapshot => {
+      const data = snapshot.data();
+      if (!peerConnection.currentRemoteDescription && data?.answer) {
+        peerConnection.setRemoteDescription(
+          new RTCSessionDescription(data.answer)
+        );
+      }
+    });
+
+    answerCandidates.onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === "added") {
+          peerConnection.addIceCandidate(
+            new RTCIceCandidate(change.doc.data())
+          );
+        }
+      });
+    });
+  }
+
+  // 📞 ANSWER CALL
+  async function answerCall(callId) {
+    const callDoc = db.collection("calls").doc(callId);
+
+    const offerCandidates = callDoc.collection("offerCandidates");
+    const answerCandidates = callDoc.collection("answerCandidates");
+
+    peerConnection = new RTCPeerConnection(servers);
+
+    remoteStream = new MediaStream();
+    document.getElementById("remoteVideo").srcObject = remoteStream;
+
+    localStream.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStream);
+    });
+
+    peerConnection.ontrack = event => {
+      event.streams[0].getTracks().forEach(track => {
+        remoteStream.addTrack(track);
+      });
+    };
+
+    peerConnection.onicecandidate = event => {
+      if (event.candidate) {
+        answerCandidates.add(event.candidate.toJSON());
+      }
+    };
+
+    const callData = (await callDoc.get()).data();
+
+    await peerConnection.setRemoteDescription(
+      new RTCSessionDescription(callData.offer)
+    );
+
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    await callDoc.update({
+      answer: {
+        type: answer.type,
+        sdp: answer.sdp
+      }
+    });
+
+    offerCandidates.onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === "added") {
+          peerConnection.addIceCandidate(
+            new RTCIceCandidate(change.doc.data())
+          );
+        }
+      });
+    });
+  }
+
+  // 👂 LISTEN FOR CALLS
+  function listenForCalls() {
+    db.collection("calls").onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === "added") {
+          const callId = change.doc.id;
+
+          if (!callId.startsWith(userId)) {
+            answerCall(callId);
+          }
+        }
+      });
+    });
+  }
+
+</script>
+
+</body>
+</html>
